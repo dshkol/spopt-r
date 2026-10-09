@@ -69,11 +69,16 @@ pub struct Floor<'a> {
     pub min: f64,
 }
 
-/// Reusable search buffers: a stamp array for visited marks and a stack.
+/// Reusable search buffers: stamp arrays for visited marks, per-search frontiers.
 pub struct Scratch {
     mark: Vec<u32>,
     stamp: u32,
-    stack: Vec<usize>,
+    /// Which search (index into `targets`) first reached each marked node.
+    comp: Vec<u32>,
+    targets: Vec<usize>,
+    frontiers: Vec<VecDeque<usize>>,
+    uf_parent: Vec<usize>,
+    uf_active: Vec<usize>,
     /// Per-region stamp used to deduplicate an area's neighbouring regions.
     region_mark: Vec<u32>,
     region_stamp: u32,
@@ -86,7 +91,11 @@ impl Scratch {
         Self {
             mark: vec![0; n],
             stamp: 0,
-            stack: Vec::with_capacity(64),
+            comp: vec![0; n],
+            targets: Vec::with_capacity(16),
+            frontiers: Vec::new(),
+            uf_parent: Vec::with_capacity(16),
+            uf_active: Vec::with_capacity(16),
             region_mark: vec![0; k],
             region_stamp: 0,
             moves: Vec::new(),
@@ -109,6 +118,8 @@ pub struct Partition {
     pub labels: Vec<i32>,
     /// Areas in each region.
     pub members: Vec<Vec<usize>>,
+    /// Position of each area within its region's member list.
+    pos: Vec<usize>,
     /// Attribute sums per region.
     pub sums: Vec<Vec<f64>>,
     /// Sum of the floor variable per region (zeros when no floor).
@@ -120,10 +131,12 @@ impl Partition {
     pub fn new(labels: &[i32], k: usize, attrs: &[Vec<f64>], floor: Option<Floor>) -> Self {
         let p = attrs.first().map(|a| a.len()).unwrap_or(0);
         let mut members = vec![Vec::new(); k];
+        let mut pos = vec![0usize; labels.len()];
         let mut sums = vec![vec![0.0; p]; k];
         let mut floor_sums = vec![0.0; k];
         for (i, &l) in labels.iter().enumerate() {
             let r = l as usize;
+            pos[i] = members[r].len();
             members[r].push(i);
             for (c, v) in attrs[i].iter().enumerate() {
                 sums[r][c] += v;
@@ -135,6 +148,7 @@ impl Partition {
         Self {
             labels: labels.to_vec(),
             members,
+            pos,
             sums,
             floor_sums,
         }
@@ -193,9 +207,13 @@ impl Partition {
     /// Apply a move. The caller has already checked feasibility.
     pub fn execute(&mut self, attrs: &[Vec<f64>], floor: Option<Floor>, area: usize, to: usize) {
         let from = self.labels[area] as usize;
-        if let Some(pos) = self.members[from].iter().position(|&m| m == area) {
-            self.members[from].swap_remove(pos);
+        let p = self.pos[area];
+        let last = *self.members[from].last().expect("non-empty donor region");
+        self.members[from].swap_remove(p);
+        if last != area {
+            self.pos[last] = p;
         }
+        self.pos[area] = self.members[to].len();
         self.members[to].push(area);
         for (c, v) in attrs[area].iter().enumerate() {
             self.sums[from][c] -= v;
@@ -226,50 +244,102 @@ impl Partition {
     /// Would removing `area` disconnect its region?
     ///
     /// Removing a node disconnects a connected region exactly when its
-    /// in-region neighbours are no longer mutually reachable without it. So a
-    /// node with at most one in-region neighbour is never an articulation
-    /// point, and the search can stop as soon as all in-region neighbours have
-    /// been reached, which on planar contiguity graphs is usually within a
-    /// handful of steps. A stamp array replaces per-call hash sets.
+    /// in-region neighbours stop being mutually reachable without it. A node
+    /// with at most one in-region neighbour is never an articulation point.
+    /// Otherwise a breadth-first search grows from every in-region neighbour
+    /// at once, merging searches when they touch. It stops with "connected" as
+    /// soon as all searches have merged, and with "disconnected" as soon as
+    /// one merged group has nothing left to explore, so the cost is bounded by
+    /// the smallest piece that would be cut off rather than by the region.
+    /// Visits are marked in a stamp array; no per-call allocation.
     fn is_articulation(&self, area: usize, adj: &Adj, scratch: &mut Scratch) -> bool {
         let r = self.labels[area];
-        let members = &self.members[r as usize];
-        if members.len() <= 2 {
+        if self.members[r as usize].len() <= 2 {
             return false;
         }
-        let mut targets = 0usize;
-        let mut start = usize::MAX;
+        scratch.targets.clear();
         for &nb in adj.get(area) {
             if self.labels[nb] == r {
-                targets += 1;
-                start = nb;
+                scratch.targets.push(nb);
             }
         }
-        if targets <= 1 {
+        let t = scratch.targets.len();
+        if t <= 1 {
             return false;
         }
+
         scratch.next_stamp();
         let stamp = scratch.stamp;
-        let mut reached = 1usize; // `start` itself
-        scratch.mark[start] = stamp;
-        scratch.mark[area] = stamp; // never enter the removed node
-        scratch.stack.clear();
-        scratch.stack.push(start);
-        while let Some(cur) = scratch.stack.pop() {
-            for &nb in adj.get(cur) {
-                if self.labels[nb] == r && scratch.mark[nb] != stamp {
-                    scratch.mark[nb] = stamp;
-                    if adj.get(nb).contains(&area) {
-                        reached += 1;
-                        if reached == targets {
-                            return false;
+        scratch.mark[area] = stamp;
+        while scratch.frontiers.len() < t {
+            scratch.frontiers.push(VecDeque::new());
+        }
+        // Union-find over the t searches, with the number of searches in each
+        // group that still have work.
+        let parent = &mut scratch.uf_parent;
+        let active = &mut scratch.uf_active;
+        parent.clear();
+        active.clear();
+        for i in 0..t {
+            parent.push(i);
+            active.push(1);
+            let sdx = scratch.targets[i];
+            scratch.mark[sdx] = stamp;
+            scratch.comp[sdx] = i as u32;
+            scratch.frontiers[i].clear();
+            scratch.frontiers[i].push_back(sdx);
+        }
+        fn find(parent: &mut [usize], mut x: usize) -> usize {
+            while parent[x] != x {
+                parent[x] = parent[parent[x]];
+                x = parent[x];
+            }
+            x
+        }
+        let mut groups = t;
+        loop {
+            let mut progressed = false;
+            for i in 0..t {
+                let cur = match scratch.frontiers[i].pop_front() {
+                    Some(c) => c,
+                    None => continue,
+                };
+                progressed = true;
+                for &nb in adj.get(cur) {
+                    if nb == area || self.labels[nb] != r {
+                        continue;
+                    }
+                    if scratch.mark[nb] != stamp {
+                        scratch.mark[nb] = stamp;
+                        scratch.comp[nb] = i as u32;
+                        scratch.frontiers[i].push_back(nb);
+                    } else {
+                        let j = scratch.comp[nb] as usize;
+                        let (ri, rj) = (find(parent, i), find(parent, j));
+                        if ri != rj {
+                            parent[rj] = ri;
+                            active[ri] += active[rj];
+                            groups -= 1;
+                            if groups == 1 {
+                                return false;
+                            }
                         }
                     }
-                    scratch.stack.push(nb);
+                }
+                if scratch.frontiers[i].is_empty() {
+                    let ri = find(parent, i);
+                    active[ri] -= 1;
+                    if active[ri] == 0 {
+                        // This group is a complete component holding none of
+                        // the other neighbours: the region would split.
+                        return true;
+                    }
                 }
             }
+            if !progressed {
+                return true;
+            }
         }
-        true
     }
 
     /// Every (area, from, to) with `area` adjacent to a different region,
