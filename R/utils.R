@@ -242,21 +242,15 @@ bridge_disconnected_nb <- function(nb, data, call_name = NULL) {
       # Units in other components
       other_units <- which(component_labels != comp)
 
-      # Find closest pair between this component and others
-      min_dist <- Inf
-      best_from <- NA
-      best_to <- NA
-
-      for (i in comp_units) {
-        for (j in other_units) {
-          d <- sqrt(sum((coords[i, ] - coords[j, ])^2))
-          if (d < min_dist) {
-            min_dist <- d
-            best_from <- i
-            best_to <- j
-          }
-        }
-      }
+      # Closest pair between this component and the others: one distance
+      # matrix instead of a nested R loop. Rows are other_units and columns
+      # comp_units, so which.min() (column-major) scans comp_units in order
+      # and other_units within each, the same first-minimum the loop found.
+      dm <- sqrt(outer(coords[other_units, 1], coords[comp_units, 1], "-")^2 +
+                 outer(coords[other_units, 2], coords[comp_units, 2], "-")^2)
+      k <- which.min(dm)
+      best_to <- other_units[(k - 1L) %% length(other_units) + 1L]
+      best_from <- comp_units[(k - 1L) %/% length(other_units) + 1L]
 
       # Add bidirectional edge
       if (!is.na(best_from) && !is.na(best_to)) {
