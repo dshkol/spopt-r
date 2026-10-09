@@ -30,7 +30,7 @@
 use rand::prelude::*;
 use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 /// Adjacency list built from 0-based edge index vectors.
 pub struct Adj {
@@ -67,6 +67,27 @@ impl Adj {
 pub struct Floor<'a> {
     pub var: &'a [f64],
     pub min: f64,
+}
+
+/// Reusable search buffers: a stamp array for visited marks and a stack.
+pub struct Scratch {
+    mark: Vec<u32>,
+    stamp: u32,
+    stack: Vec<usize>,
+}
+
+impl Scratch {
+    pub fn new(n: usize) -> Self {
+        Self { mark: vec![0; n], stamp: 0, stack: Vec::with_capacity(64) }
+    }
+
+    fn next_stamp(&mut self) {
+        self.stamp = self.stamp.wrapping_add(1);
+        if self.stamp == 0 {
+            self.mark.iter_mut().for_each(|m| *m = 0);
+            self.stamp = 1;
+        }
+    }
 }
 
 /// A partition of areas into regions with running sums for O(p) deltas.
@@ -177,7 +198,7 @@ impl Partition {
 
     /// Can `area` leave its region without emptying it, disconnecting it,
     /// or taking it below the floor?
-    pub fn can_leave(&self, area: usize, adj: &Adj, floor: Option<Floor>) -> bool {
+    pub fn can_leave(&self, area: usize, adj: &Adj, floor: Option<Floor>, scratch: &mut Scratch) -> bool {
         let r = self.labels[area] as usize;
         if self.members[r].len() <= 1 {
             return false;
@@ -187,32 +208,56 @@ impl Partition {
                 return false;
             }
         }
-        !self.is_articulation(area, adj)
+        !self.is_articulation(area, adj, scratch)
     }
 
-    /// Depth-first search within the region, skipping `area`.
-    fn is_articulation(&self, area: usize, adj: &Adj) -> bool {
+    /// Would removing `area` disconnect its region?
+    ///
+    /// Removing a node disconnects a connected region exactly when its
+    /// in-region neighbours are no longer mutually reachable without it. So a
+    /// node with at most one in-region neighbour is never an articulation
+    /// point, and the search can stop as soon as all in-region neighbours have
+    /// been reached, which on planar contiguity graphs is usually within a
+    /// handful of steps. A stamp array replaces per-call hash sets.
+    fn is_articulation(&self, area: usize, adj: &Adj, scratch: &mut Scratch) -> bool {
         let r = self.labels[area];
         let members = &self.members[r as usize];
         if members.len() <= 2 {
             return false;
         }
-        let start = match members.iter().find(|&&m| m != area) {
-            Some(&s) => s,
-            None => return false,
-        };
-        let mut seen = HashSet::with_capacity(members.len());
-        let mut stack = vec![start];
-        seen.insert(start);
-        while let Some(cur) = stack.pop() {
+        let mut targets = 0usize;
+        let mut start = usize::MAX;
+        for &nb in adj.get(area) {
+            if self.labels[nb] == r {
+                targets += 1;
+                start = nb;
+            }
+        }
+        if targets <= 1 {
+            return false;
+        }
+        scratch.next_stamp();
+        let stamp = scratch.stamp;
+        let mut reached = 1usize; // `start` itself
+        scratch.mark[start] = stamp;
+        scratch.mark[area] = stamp; // never enter the removed node
+        scratch.stack.clear();
+        scratch.stack.push(start);
+        while let Some(cur) = scratch.stack.pop() {
             for &nb in adj.get(cur) {
-                if nb != area && self.labels[nb] == r && !seen.contains(&nb) {
-                    seen.insert(nb);
-                    stack.push(nb);
+                if self.labels[nb] == r && scratch.mark[nb] != stamp {
+                    scratch.mark[nb] = stamp;
+                    if adj.get(nb).contains(&area) {
+                        reached += 1;
+                        if reached == targets {
+                            return false;
+                        }
+                    }
+                    scratch.stack.push(nb);
                 }
             }
         }
-        seen.len() < members.len() - 1
+        true
     }
 
     /// Every (area, from, to) with `area` adjacent to a different region.
@@ -245,6 +290,7 @@ pub fn greedy(
     rng: &mut ChaCha8Rng,
 ) -> usize {
     let k = part.k();
+    let mut scratch = Scratch::new(part.labels.len());
     let mut passes = 0;
     while passes < max_passes {
         passes += 1;
@@ -267,7 +313,7 @@ pub fn greedy(
                 for a in cands {
                     let from = part.labels[a] as usize;
                     let delta = part.move_delta(attrs, a, from, r);
-                    if delta < -1e-12 && part.can_leave(a, adj, floor) {
+                    if delta < -1e-12 && part.can_leave(a, adj, floor, &mut scratch) {
                         part.execute(attrs, floor, a, r);
                         moved = true;
                         changed = true;
@@ -300,6 +346,7 @@ pub fn tabu(
     conv: usize,
 ) -> Partition {
     let mut part = start;
+    let mut scratch = Scratch::new(part.labels.len());
     let mut current = part.objective(attrs);
     let mut best = current;
     let mut best_labels = part.labels.clone();
@@ -326,7 +373,7 @@ pub fn tabu(
             if is_tabu && current + delta >= best {
                 continue;
             }
-            if part.can_leave(a, adj, floor) {
+            if part.can_leave(a, adj, floor, &mut scratch) {
                 chosen = Some((delta, a, from, to));
                 break;
             }
@@ -393,6 +440,7 @@ pub fn anneal(
     rng: &mut ChaCha8Rng,
 ) -> Partition {
     let mut part = start;
+    let mut scratch = Scratch::new(part.labels.len());
     let mut temperature = if initial_temperature > 0.0 {
         initial_temperature
     } else {
@@ -424,7 +472,7 @@ pub fn anneal(
             }
             let delta = part.move_delta(attrs, a, from, to);
             let accept = delta < 0.0 || rng.gen::<f64>() < (-delta / temperature).exp();
-            if accept && part.can_leave(a, adj, floor) {
+            if accept && part.can_leave(a, adj, floor, &mut scratch) {
                 part.execute(attrs, floor, a, to);
                 current += delta;
                 accepted += 1;
