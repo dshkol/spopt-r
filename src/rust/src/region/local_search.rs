@@ -74,11 +74,23 @@ pub struct Scratch {
     mark: Vec<u32>,
     stamp: u32,
     stack: Vec<usize>,
+    /// Per-region stamp used to deduplicate an area's neighbouring regions.
+    region_mark: Vec<u32>,
+    region_stamp: u32,
+    /// Reused buffer for the current border moves.
+    pub moves: Vec<(usize, usize, usize)>,
 }
 
 impl Scratch {
-    pub fn new(n: usize) -> Self {
-        Self { mark: vec![0; n], stamp: 0, stack: Vec::with_capacity(64) }
+    pub fn new(n: usize, k: usize) -> Self {
+        Self {
+            mark: vec![0; n],
+            stamp: 0,
+            stack: Vec::with_capacity(64),
+            region_mark: vec![0; k],
+            region_stamp: 0,
+            moves: Vec::new(),
+        }
     }
 
     fn next_stamp(&mut self) {
@@ -260,21 +272,28 @@ impl Partition {
         true
     }
 
-    /// Every (area, from, to) with `area` adjacent to a different region.
-    pub fn border_moves(&self, adj: &Adj) -> Vec<(usize, usize, usize)> {
-        let mut moves = Vec::new();
+    /// Every (area, from, to) with `area` adjacent to a different region,
+    /// in area order then first-seen neighbour order, written into
+    /// `scratch.moves` (reused across calls to avoid reallocation).
+    pub fn border_moves(&self, adj: &Adj, scratch: &mut Scratch) {
+        scratch.moves.clear();
         for (area, &l) in self.labels.iter().enumerate() {
             let from = l as usize;
-            let mut seen: Vec<usize> = Vec::new();
+            scratch.region_stamp = scratch.region_stamp.wrapping_add(1);
+            if scratch.region_stamp == 0 {
+                scratch.region_mark.iter_mut().for_each(|m| *m = 0);
+                scratch.region_stamp = 1;
+            }
+            let st = scratch.region_stamp;
+            scratch.region_mark[from] = st;
             for &nb in adj.get(area) {
                 let to = self.labels[nb] as usize;
-                if to != from && !seen.contains(&to) {
-                    seen.push(to);
-                    moves.push((area, from, to));
+                if scratch.region_mark[to] != st {
+                    scratch.region_mark[to] = st;
+                    scratch.moves.push((area, from, to));
                 }
             }
         }
-        moves
     }
 }
 
@@ -290,7 +309,7 @@ pub fn greedy(
     rng: &mut ChaCha8Rng,
 ) -> usize {
     let k = part.k();
-    let mut scratch = Scratch::new(part.labels.len());
+    let mut scratch = Scratch::new(part.labels.len(), part.k());
     let mut passes = 0;
     while passes < max_passes {
         passes += 1;
@@ -346,7 +365,7 @@ pub fn tabu(
     conv: usize,
 ) -> Partition {
     let mut part = start;
-    let mut scratch = Scratch::new(part.labels.len());
+    let mut scratch = Scratch::new(part.labels.len(), part.k());
     let mut current = part.objective(attrs);
     let mut best = current;
     let mut best_labels = part.labels.clone();
@@ -357,10 +376,11 @@ pub fn tabu(
         if no_improve >= conv {
             break;
         }
-        let mut moves: Vec<(f64, usize, usize, usize)> = part
-            .border_moves(adj)
-            .into_iter()
-            .map(|(a, from, to)| (part.move_delta(attrs, a, from, to), a, from, to))
+        part.border_moves(adj, &mut scratch);
+        let mut moves: Vec<(f64, usize, usize, usize)> = scratch
+            .moves
+            .iter()
+            .map(|&(a, from, to)| (part.move_delta(attrs, a, from, to), a, from, to))
             .collect();
         if moves.is_empty() {
             break;
@@ -408,7 +428,9 @@ pub fn calibrate_temperature(
     p_accept: f64,
     rng: &mut ChaCha8Rng,
 ) -> f64 {
-    let mut moves = part.border_moves(adj);
+    let mut scratch = Scratch::new(part.labels.len(), part.k());
+    part.border_moves(adj, &mut scratch);
+    let mut moves = std::mem::take(&mut scratch.moves);
     moves.shuffle(rng);
     let uphill: Vec<f64> = moves
         .iter()
@@ -440,7 +462,7 @@ pub fn anneal(
     rng: &mut ChaCha8Rng,
 ) -> Partition {
     let mut part = start;
-    let mut scratch = Scratch::new(part.labels.len());
+    let mut scratch = Scratch::new(part.labels.len(), part.k());
     let mut temperature = if initial_temperature > 0.0 {
         initial_temperature
     } else {
@@ -456,10 +478,11 @@ pub fn anneal(
         if temperature < 1e-12 {
             break;
         }
-        let mut moves = part.border_moves(adj);
+        part.border_moves(adj, &mut scratch);
+        let mut moves = std::mem::take(&mut scratch.moves);
         moves.shuffle(rng);
         let mut accepted = 0usize;
-        for (a, from, to) in moves {
+        for &(a, from, to) in &moves {
             // Earlier moves in this sweep may have moved the area, or moved
             // away the neighbour that made `to` adjacent to it.
             if part.labels[a] as usize != from
@@ -488,6 +511,7 @@ pub fn anneal(
                 }
             }
         }
+        scratch.moves = moves;
         temperature *= cooling_rate;
         if accepted == 0 {
             idle_sweeps += 1;
