@@ -227,14 +227,17 @@ bridge_disconnected_nb <- function(nb, data, call_name = NULL) {
     if (length(x) == 1 && x[1] == 0) integer(0) else as.integer(x)
   })
 
-  # Find bridges between components
-  # Strategy: for each component except the largest, find the closest point
-
-  # in any other component and add a symmetric edge
-  unique_components <- unique(component_labels)
-
-  if (length(unique_components) > 1) {
-    bridges_added <- 0
+  # Find bridges between components.
+  # Strategy: for each component except the first, add a symmetric edge between
+  # its closest pair of units with any other component. One pass does not
+  # guarantee a connected result (three islands can all link to each other and
+  # never to the mainland), so passes repeat on the recomputed components until
+  # one remains.
+  bridges_added <- 0
+  max_passes <- conn$n_components + 1L
+  for (pass in seq_len(max_passes)) {
+    unique_components <- unique(component_labels)
+    if (length(unique_components) <= 1) break
 
     for (comp in unique_components[-1]) {  # Skip first (usually largest) component
       # Units in this component
@@ -253,17 +256,22 @@ bridge_disconnected_nb <- function(nb, data, call_name = NULL) {
       best_from <- comp_units[(k - 1L) %/% length(other_units) + 1L]
 
       # Add bidirectional edge
-      if (!is.na(best_from) && !is.na(best_to)) {
-        if (!(best_to %in% nb_list[[best_from]])) {
-          nb_list[[best_from]] <- c(nb_list[[best_from]], best_to)
-        }
-        if (!(best_from %in% nb_list[[best_to]])) {
-          nb_list[[best_to]] <- c(nb_list[[best_to]], best_from)
-        }
-        bridges_added <- bridges_added + 1
+      if (!(best_to %in% nb_list[[best_from]])) {
+        nb_list[[best_from]] <- c(nb_list[[best_from]], best_to)
       }
+      if (!(best_from %in% nb_list[[best_to]])) {
+        nb_list[[best_to]] <- c(nb_list[[best_to]], best_from)
+      }
+      bridges_added <- bridges_added + 1
     }
 
+    # Recompute components on the bridged graph
+    tmp <- lapply(nb_list, function(x) if (length(x) == 0) 0L else sort(as.integer(x)))
+    class(tmp) <- "nb"
+    component_labels <- spdep::n.comp.nb(tmp)$comp.id
+  }
+
+  if (bridges_added > 0) {
     message(
       sprintf("%sBridged %d disconnected component(s) using nearest-neighbor connections.",
               prefix, bridges_added)
