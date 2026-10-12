@@ -24,6 +24,7 @@ for (n in sizes) {
     rec(n_act, "azp basic from skater, nb given", tm(azp(fx, attrs, weights = nb, method = "basic", initial_regions = sk, seed = 1)))
     rec(n_act, "azp sa from skater, nb given", tm(azp(fx, attrs, weights = nb, method = "sa", initial_regions = sk, seed = 1)))
   }
+  if ("redcap" %in% getNamespaceExports("spopt")) rec(n_act, "redcap fullorder-ward, nb given", tm(redcap(fx, attrs, n_regions = 10, weights = nb)))
   rec(n_act, "max_p 20k floor, nb given", tm(mp <- max_p_regions(fx, attrs, threshold_var = "pop", threshold = 20000, weights = nb, seed = 1)), sprintf("p=%d", attr(mp, "spopt")$n_regions))
   rec(n_act, "max_p construction only", tm(max_p_regions(fx, attrs, threshold_var = "pop", threshold = 20000, weights = nb, seed = 1, n_sa_iterations = 0)))
   if (n_act <= 2500) rec(n_act, "spenc, nb given", tm(spenc(fx, attrs, n_regions = 10, weights = nb, seed = 1)))
