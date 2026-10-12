@@ -54,8 +54,19 @@ pub fn solve(
         .map(|i| (0..n_attrs).map(|j| attrs[[i, j]]).collect())
         .collect();
 
-    // Build dissimilarity-weighted graph from adjacency and take its MST.
-    let dissim = compute_edge_dissimilarity(&attr_vecs, adj_i, adj_j);
+    let mst_edges = mst_edges(&attr_vecs, adj_i, adj_j);
+    let labels = cut_tree(&attr_vecs, &mst_edges, n_regions, floor_var.as_deref(), floor_value);
+
+    // 1-based labels for R
+    labels.iter().map(|&l| l + 1).collect()
+}
+
+/// Minimum spanning tree of the contiguity graph weighted by attribute
+/// Euclidean distance (Kruskal, via petgraph). Shared by SKATER and
+/// REDCAP first-order single linkage, whose tree this is.
+pub fn mst_edges(attr_vecs: &[Vec<f64>], adj_i: &[i32], adj_j: &[i32]) -> Vec<(usize, usize)> {
+    let n = attr_vecs.len();
+    let dissim = compute_edge_dissimilarity(attr_vecs, adj_i, adj_j);
     let mut graph: UnGraph<usize, f64> = UnGraph::new_undirected();
     let nodes: Vec<NodeIndex> = (0..n).map(|i| graph.add_node(i)).collect();
     for (idx, (&row, &col)) in adj_i.iter().zip(adj_j.iter()).enumerate() {
@@ -64,15 +75,9 @@ pub fn solve(
         }
     }
     let mst: UnGraph<usize, f64> = UnGraph::from_elements(min_spanning_tree(&graph));
-    let mst_edges: Vec<(usize, usize)> = mst
-        .edge_references()
+    mst.edge_references()
         .map(|e| (e.source().index(), e.target().index()))
-        .collect();
-
-    let labels = cut_tree(&attr_vecs, &mst_edges, n_regions, floor_var.as_deref(), floor_value);
-
-    // 1-based labels for R
-    labels.iter().map(|&l| l + 1).collect()
+        .collect()
 }
 
 /// Partition a spanning tree (or forest) over `n` areas into `n_regions`

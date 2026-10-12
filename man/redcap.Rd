@@ -10,7 +10,8 @@ redcap(
   n_regions,
   weights = "queen",
   bridge_islands = FALSE,
-  method = c("fullorder-ward"),
+  method = c("fullorder-averagelinkage", "fullorder-singlelinkage",
+    "fullorder-completelinkage", "fullorder-wardlinkage", "firstorder-singlelinkage"),
   floor = NULL,
   floor_value = 0,
   scale = TRUE,
@@ -39,11 +40,20 @@ distance-based weights
 components (e.g., islands) using nearest-neighbor edges. If FALSE (default),
 the function will error when the spatial weights graph is disconnected.}
 
-\item{method}{Character. Linkage used to build the tree. Currently
-\code{"fullorder-ward"}: Ward's minimum-variance criterion evaluated between
-whole clusters (full order), the variant that is usually most homogeneous.
-The name matches rgeoda's \code{"fullorder-wardlinkage"}, which is accepted as
-an alias.}
+\item{method}{Character. Linkage used to build the tree; names follow GeoDa
+and rgeoda:
+\itemize{
+\item \code{"fullorder-averagelinkage"} (default): mean attribute distance over
+all pairs of areas between two clusters
+\item \code{"fullorder-singlelinkage"}: minimum distance over all pairs
+\item \code{"fullorder-completelinkage"}: maximum distance over all pairs
+\item \code{"fullorder-wardlinkage"}: Ward's minimum-variance criterion
+\item \code{"firstorder-singlelinkage"}: shortest contiguity edge only; the
+tree is the minimum spanning tree, so this equals \code{\link[=skater]{skater()}}
+}
+"Full order" means the cluster distance considers every pair of areas in
+the two clusters, not only adjacent pairs; only spatially contiguous
+clusters may merge in all variants.}
 
 \item{floor}{Optional. Column name specifying a floor constraint variable.}
 
@@ -82,9 +92,20 @@ joined; those edges form the tree. Because merges are chosen by cluster-level
 similarity, the tree tends to respect larger homogeneous zones, and the
 resulting regions are usually more homogeneous than SKATER's at the same k.
 
-With \code{method = "fullorder-ward"}, the agglomeration is the same as
+With \code{method = "fullorder-wardlinkage"}, the agglomeration is the same as
 \code{\link[=ward_spatial]{ward_spatial()}}; cutting the recorded tree rather than reading regions off
-the merge sequence lets each cut re-optimize where a region splits.
+the merge sequence lets each cut re-optimize where a region splits. The
+full-order single, average and complete linkages keep an n x n matrix of
+cluster distances (8 n^2 bytes), as GeoDa does; Ward and first-order single
+linkage run in O(n) memory.
+
+Results match \code{rgeoda::redcap()} for the same method name, with one
+exception: rgeoda's average linkage runs on squared Euclidean distances (a
+line in libgeoda's distance-matrix conversion overwrites the square root it
+has just taken), while this implementation uses Euclidean distances as in
+Guo (2008). Single and complete linkage are unaffected because minimum and
+maximum do not depend on the square root. Reported upstream as
+\url{https://github.com/GeoDaCenter/geoda/issues/2613}.
 }
 \examples{
 \donttest{
@@ -93,6 +114,10 @@ nc <- st_read(system.file("shape/nc.shp", package = "sf"))
 
 result <- redcap(nc, attrs = c("SID74", "SID79"), n_regions = 5)
 attr(result, "spopt")$objective
+
+# Ward linkage is often the most homogeneous
+result_ward <- redcap(nc, attrs = c("SID74", "SID79"), n_regions = 5,
+                      method = "fullorder-wardlinkage")
 
 # Compare with SKATER and constrained Ward at the same k
 attr(skater(nc, attrs = c("SID74", "SID79"), n_regions = 5), "spopt")$objective
