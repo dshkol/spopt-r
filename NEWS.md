@@ -23,9 +23,11 @@
   - Tabu and SA results are finished with a greedy pass, so every result is a
     local optimum under single-area moves.
   - Move evaluation uses the exact O(p) update of a within-region sum of
-    squares, and the contiguity check runs only for moves that would be
-    accepted. Searches that previously made 100 moves now run thousands of
-    sweeps in comparable time.
+    squares; the contiguity check runs only for moves that would be accepted
+    and stops as soon as the moving area's in-region neighbours are mutually
+    reachable; member removal is O(1) through a position index. Searches that
+    previously made 100 moves now run thousands of sweeps in comparable time
+    (10,000 hexagons, SA from a SKATER start: 5.1 s).
   - `max_iterations` now defaults to 1000 and its meaning depends on `method`;
     see the documentation.
   - Metadata gains `initial_objective` and `warm_start`.
