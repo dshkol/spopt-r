@@ -4,13 +4,16 @@
 
 ## New features
 
-* `redcap()`: REDCAP regionalization (Guo 2008) with full-order Ward linkage.
-  The contiguity-constrained Ward agglomeration records, for each merge, the
-  most similar adjacent pair between the two clusters; those edges form a
-  spanning tree that is cut as in `skater()`, with the same optional floor.
-  On the benchmark datasets it removes 4 to 8 points more heterogeneity than
-  SKATER at the same k. Method names follow rgeoda (`"fullorder-wardlinkage"`
-  is accepted as an alias of `"fullorder-ward"`).
+* `redcap()`: REDCAP regionalization (Guo 2008) with the five linkages that
+  GeoDa, rgeoda and pygeoda expose: full-order average (default), single,
+  complete and Ward linkage, and first-order single linkage. A
+  contiguity-constrained agglomeration records, for each merge, the shortest
+  contiguity edge between the two clusters; those edges form a spanning tree
+  that is cut as in `skater()`, with the same optional floor. Method names
+  follow rgeoda and partitions match `rgeoda::redcap()` for every linkage
+  except average, where rgeoda uses squared distances (see `?redcap`). Ward
+  linkage removes 4 to 8 points more heterogeneity than SKATER at the same k
+  on the benchmark datasets.
 
 ## Bug fixes
 
