@@ -20,6 +20,7 @@ for (n in sizes) {
   rec(n_act, "skater, nb given", tm(sk <- skater(fx, attrs, n_regions = 10, weights = nb)))
   rec(n_act, "skater, floor, nb given", tm(skater(fx, attrs, n_regions = 10, weights = nb, floor = "pop", floor_value = 20000)))
   rec(n_act, "ward_spatial, nb given", tm(ward_spatial(fx, attrs, n_regions = 10, weights = nb)))
+  if ("redcap" %in% getNamespaceExports("spopt")) rec(n_act, "redcap fullorder-ward, nb given", tm(redcap(fx, attrs, n_regions = 10, weights = nb)))
   rec(n_act, "azp basic from skater, nb given", tm(azp(fx, attrs, weights = nb, method = "basic", initial_regions = sk, seed = 1)))
   rec(n_act, "azp sa from skater, nb given", tm(azp(fx, attrs, weights = nb, method = "sa", initial_regions = sk, seed = 1)))
   rec(n_act, "max_p 20k floor, nb given", tm(mp <- max_p_regions(fx, attrs, threshold_var = "pop", threshold = 20000, weights = nb, seed = 1)), sprintf("p=%d", attr(mp, "spopt")$n_regions))

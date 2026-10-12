@@ -2,6 +2,16 @@
 
 * `spider_lines()` gains a `facilities` argument to draw links for selected facilities only. Filtering happens before any geometry is built, so one store's trade area from a large `huff()` result takes milliseconds instead of seconds.
 
+## New features
+
+* `redcap()`: REDCAP regionalization (Guo 2008) with full-order Ward linkage.
+  The contiguity-constrained Ward agglomeration records, for each merge, the
+  most similar adjacent pair between the two clusters; those edges form a
+  spanning tree that is cut as in `skater()`, with the same optional floor.
+  On the benchmark datasets it removes 4 to 8 points more heterogeneity than
+  SKATER at the same k. Method names follow rgeoda (`"fullorder-wardlinkage"`
+  is accepted as an alias of `"fullorder-ward"`).
+
 ## Bug fixes
 
 * `bridge_islands = TRUE` could return a graph that was still disconnected:

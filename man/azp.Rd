@@ -64,18 +64,18 @@ applied once per sweep (default 0.99).}
 If 0 (default), it is calibrated from a sample of uphill moves so that a
 typical uphill move is accepted with probability 0.8 at the start.}
 
-\item{scale}{Logical. If TRUE (default), standardize attributes before clustering.}
-
-\item{seed}{Optional integer for reproducibility.}
-
-\item{verbose}{Logical. Print progress messages.}
-
 \item{initial_regions}{Optional warm start: a vector of length \code{nrow(data)}
 giving a starting region for every area, or an sf object returned by
 another spopt regionalization function (its \code{.region} column is used).
 Every starting region must be spatially contiguous under \code{weights}.
 Starting AZP from a SKATER or Ward solution usually beats a random start.
 If NULL (default), a random contiguous partition is grown from seeds.}
+
+\item{scale}{Logical. If TRUE (default), standardize attributes before clustering.}
+
+\item{seed}{Optional integer for reproducibility.}
+
+\item{verbose}{Logical. Print progress messages.}
 }
 \value{
 An sf object with a \code{.region} column containing cluster assignments.

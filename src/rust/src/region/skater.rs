@@ -69,6 +69,27 @@ pub fn solve(
         .map(|e| (e.source().index(), e.target().index()))
         .collect();
 
+    let labels = cut_tree(&attr_vecs, &mst_edges, n_regions, floor_var.as_deref(), floor_value);
+
+    // 1-based labels for R
+    labels.iter().map(|&l| l + 1).collect()
+}
+
+/// Partition a spanning tree (or forest) over `n` areas into `n_regions`
+/// regions by repeatedly removing the edge whose removal lowers the total
+/// within-region SSD the most, subject to an optional floor on both halves.
+/// Returns 0-based labels. Shared by SKATER (minimum spanning tree) and
+/// REDCAP (tree from contiguity-constrained hierarchical clustering).
+pub fn cut_tree(
+    attr_vecs: &[Vec<f64>],
+    tree_edges: &[(usize, usize)],
+    n_regions: usize,
+    floor: Option<&[f64]>,
+    floor_value: f64,
+) -> Vec<i32> {
+    let n = attr_vecs.len();
+    let n_attrs = attr_vecs.first().map(|a| a.len()).unwrap_or(0);
+    let mst_edges = tree_edges;
     // Tree adjacency: (neighbour, edge index)
     let mut tree: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
     for (idx, &(a, b)) in mst_edges.iter().enumerate() {
@@ -77,7 +98,6 @@ pub fn solve(
     }
     let mut cut_edge = vec![false; mst_edges.len()];
 
-    let floor = floor_var.as_deref();
     let mut scratch = Scratch::new(n, n_attrs);
 
     // Initial regions: one per connected component of the tree (a connected
@@ -95,7 +115,7 @@ pub fn solve(
     let mut best: Vec<Option<Cut>> = (0..roots.len())
         .map(|r| {
             evaluate_region(
-                r, roots[r], &attr_vecs, &tree, &cut_edge, &labels, floor, floor_value, &mut scratch,
+                r, roots[r], attr_vecs, &tree, &cut_edge, &labels, floor, floor_value, &mut scratch,
             )
         })
         .collect();
@@ -125,19 +145,19 @@ pub fn solve(
         relabel_component(cut.child, new_r as i32, &tree, &cut_edge, &mut labels);
         roots.push(cut.child);
         best[r] = evaluate_region(
-            r, roots[r], &attr_vecs, &tree, &cut_edge, &labels, floor, floor_value, &mut scratch,
+            r, roots[r], attr_vecs, &tree, &cut_edge, &labels, floor, floor_value, &mut scratch,
         );
         best.push(evaluate_region(
-            new_r, cut.child, &attr_vecs, &tree, &cut_edge, &labels, floor, floor_value, &mut scratch,
+            new_r, cut.child, attr_vecs, &tree, &cut_edge, &labels, floor, floor_value, &mut scratch,
         ));
     }
 
-    // 1-based labels for R
-    labels.iter().map(|&l| l + 1).collect()
+    labels
 }
 
+
 /// Compute edge dissimilarities based on attribute differences
-fn compute_edge_dissimilarity(attrs: &[Vec<f64>], adj_i: &[i32], adj_j: &[i32]) -> Vec<f64> {
+pub fn compute_edge_dissimilarity(attrs: &[Vec<f64>], adj_i: &[i32], adj_j: &[i32]) -> Vec<f64> {
     adj_i
         .iter()
         .zip(adj_j.iter())

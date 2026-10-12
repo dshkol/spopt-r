@@ -42,6 +42,9 @@ cases <- list(
   g2500_azp_sa   = quote(azp(g2500, paste0("v",1:4), n_regions = 20, method = "sa", seed = 1, max_iterations = 200)),
   gint_skater    = quote(skater(gint, paste0("v",1:4), n_regions = 12)),
   gint_ward      = quote(ward_spatial(gint, paste0("v",1:4), n_regions = 12)),
+  meck_redcap    = quote(redcap(meck, c("medinc","pct_bach","rent","age"), n_regions = 10)),
+  van_redcap_fl  = quote(redcap(van, va, n_regions = 12, floor = "pop", floor_value = 30000)),
+  g500_redcap    = quote(redcap(g500, paste0("v",1:4), n_regions = 12)),
   gisl_skater_br = quote(skater(gisl, paste0("v",1:4), n_regions = 8, bridge_islands = TRUE)),
   gisl_nb_bridge = quote(suppressMessages(spopt:::prepare_weights(gisl, "queen", bridge_islands = TRUE)))
 )
